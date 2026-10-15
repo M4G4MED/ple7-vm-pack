@@ -31,20 +31,29 @@ die() { log "FATAL: $*"; exit 1; }
 grep -qi ubuntu /etc/os-release || log "WARN: not Ubuntu — steps 1-2 assume apt/dpkg; continue only if you know why"
 mkdir -p "$MODEL_DIR" "$TABLE_DIR" "$CACHE_DIR"
 
+# CUDA 13.0 (baked into the image) hard-requires driver >= 580.65.06
+DRV_MIN="580.65"
+drv_ge() { [ "$(printf '%s\n%s\n' "$1" "$DRV_MIN" | sort -V | head -1)" = "$DRV_MIN" ]; }
+
 # ---------- [1/6] NVIDIA open kernel driver ----------
 if ! nvidia-smi >/dev/null 2>&1; then
-  log "[1/6] installing NVIDIA open kernel module…"
+  if command -v mokutil >/dev/null 2>&1 && mokutil --sb-state 2>/dev/null | grep -qi enabled; then
+    die "Secure Boot is ON — the DKMS nvidia module won't load. Disable Secure Boot in the VM BIOS (or enroll a MOK manually), then re-run."
+  fi
+  log "[1/6] installing NVIDIA open kernel module (need >=$DRV_MIN for CUDA 13)…"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -q
   apt-get install -yq software-properties-common
   add-apt-repository -y universe || true
   apt-get install -yq nvidia-open \
-    || apt-get install -yq nvidia-driver-570-server-open \
-    || apt-get install -yq nvidia-driver-570-open \
-    || die "no suitable nvidia driver package — install an open-module driver >=565 manually, then re-run"
+    || apt-get install -yq nvidia-driver-580-open \
+    || apt-get install -yq nvidia-driver-580-server-open \
+    || die "no nvidia driver >=$DRV_MIN package available (try 'apt-get update' after enabling -updates pocket, or NVIDIA cuda repo), then re-run"
   log "[1/6] driver installed. REBOOT, then: sudo bash ple7-deploy.sh"
   exit 90
 fi
+DRV=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1)
+drv_ge "$DRV" || die "driver $DRV is too old — this image is CUDA 13.0 and needs >= $DRV_MIN (open kernel module). Purge nvidia-driver-* and install the 580 branch, then re-run."
 NG=$(nvidia-smi -L 2>/dev/null | wc -l)
 [ "$NG" -ge 1 ] || die "driver present but 0 GPUs visible — check VMware PCI passthrough"
 log "[1/6] driver OK: $(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader | paste -sd' | ')"
@@ -70,13 +79,32 @@ else
 fi
 
 # ---------- [4/6] model weights (plain HTTPS, resume-safe, no token) ----------
-IDX="$MODEL_DIR/.dl-index.json"
-[ -s "$IDX" ] || curl -fsSL --retry 5 --retry-delay 3 \
-  "https://huggingface.co/api/models/$REPO/tree/main?recursive=true" -o "$IDX" \
-  || die "cannot list $REPO from huggingface.co"
+# fetch tree index, following pagination if the repo ever grows past one page
+IDX="$MODEL_DIR/.dl-index.json"; PAGE="https://huggingface.co/api/models/$REPO/tree/main?recursive=true"
+: > "$IDX.pages"
+while [ -n "$PAGE" ]; do
+  HDR="/tmp/.ple7-hdr"; curl -fsSL --retry 5 --retry-delay 3 -D "$HDR" -o /tmp/.ple7-page "$PAGE" \
+    || die "cannot list $REPO from huggingface.co"
+  cat /tmp/.ple7-page >> "$IDX.pages"
+  PAGE=$(grep -i '^link:' "$HDR" | grep -o '<[^>]*>; rel="next"' | sed 's/<//;s/>;.*//' || true)
+done
+rm -f /tmp/.ple7-hdr /tmp/.ple7-page
+python3 - "$IDX.pages" "$IDX" <<'PY'
+import json,sys
+raw=open(sys.argv[1]).read().strip()
+items=[]
+dec=json.JSONDecoder(); i=0
+while i < len(raw):
+    while i < len(raw) and raw[i] in " \n\r\t": i += 1
+    if i >= len(raw): break
+    obj, i = dec.raw_decode(raw, i)
+    items.extend(obj)
+json.dump(items, open(sys.argv[2], "w"))
+PY
+rm -f "$IDX.pages"
 need=0
 while read -r f sz; do
-  case "$f" in *.safetensors|*.json|*.model|*.txt|*.py) ;; *) continue ;; esac
+  case "$f" in *.safetensors|*.json|*.model|*.txt|*.py|*.jinja) ;; *) continue ;; esac
   out="$MODEL_DIR/$f"
   if [ ! -f "$out" ] || [ "$(stat -c%s "$out" 2>/dev/null)" != "$sz" ]; then
     need=1

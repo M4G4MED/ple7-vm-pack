@@ -30,11 +30,28 @@ exits 90 once and asks for a reboot).
 ## Requirements (honest list)
 - Full **PCI passthrough** of the GPU to the guest. VMware vGPU profiles do
   not work (no full device access / wrong VRAM accounting).
+- **Driver ≥ 580.65** (open kernel module). The image is CUDA 13.0; a 570
+  driver installs fine but CUDA init fails at first token. The script checks
+  this and refuses to proceed with an old driver.
+- **Secure Boot off** (or a MOK-enrolled DKMS module) — Ubuntu's `nvidia-open`
+  is DKMS-built and won't load under Secure Boot. The script detects this.
+- **ESXi only:** BIOS "Above 4G Decoding" on, VM firmware **EFI**, memory
+  **fully reserved**, and these VM advanced settings (big GPUs have huge
+  BARs — without them the VM won't power on or the driver won't bind):
+  `pciPassthru.use64bitMMIO = TRUE` and `pciPassthru.64bitMMIOSizeGB` = total
+  GPU VRAM summed, rounded up to the next power of two, **then one power
+  higher** (2×64 GB → 256; 2×48 GB → 128). Resizable-BAR is unsupported in
+  passthrough mode — leave it off on the host.
+- **Workstation only:** no ECC/vGPU issues, but passthrough requires the host
+  GPU to be the non-primary device or using `cuda.enable = TRUE` unsupported
+  configs — realistically ESXi (or KVM) is the right hypervisor for this.
 - **sm_80 or newer**, ≥48 GiB per GPU for PP=2 (production: 2× 64 GB), or a
   single ≥76 GiB card with `PP_SIZE=1`.
 - ≥96 GB VM RAM (the 48 GB PLE table is mmap'd), ≥400 GB free disk.
 - The image runs Ampere kernels (that's what the production cards are) —
   NVFP4 weights dequantize through the fork's sm_80 path.
+- Docker Hub anonymous pulls are rate-limited per IP; on shared NAT IPs
+  `podman pull` of the 8.6 GB base may need a `podman login docker.io` retry.
 
 ## Tuning
 Edit `/etc/systemd/system/ple7-vm.service` or `/usr/local/bin/ple7-vm`
