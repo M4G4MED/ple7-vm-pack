@@ -33,8 +33,13 @@ exits 90 once and asks for a reboot).
 - **Driver ≥ 580.65** (open kernel module). The image is CUDA 13.0; a 570
   driver installs fine but CUDA init fails at first token. The script checks
   this and refuses to proceed with an old driver.
-- **Secure Boot off** (or a MOK-enrolled DKMS module) — Ubuntu's `nvidia-open`
-  is DKMS-built and won't load under Secure Boot. The script detects this.
+- **Secure Boot**: the clean fix is per-VM, not the host's — ESXi: Edit VM >
+  Boot Options > EFI > untick Secure Boot (`.vmx`: `uefi.secureBoot.enabled =
+  "FALSE"`; it's independent of ESXi host Secure Boot, no vTPM needed).
+  Workstation: VM Settings > Options > Advanced. The script also tries
+  Ubuntu's prebuilt Canonical-signed 580 modules first, which run under
+  Secure Boot with no firmware change at all, and falls back to a one-time
+  `mokutil` MOK enrollment recipe.
 - **ESXi only:** BIOS "Above 4G Decoding" on, VM firmware **EFI**, memory
   **fully reserved**, and these VM advanced settings (big GPUs have huge
   BARs — without them the VM won't power on or the driver won't bind):

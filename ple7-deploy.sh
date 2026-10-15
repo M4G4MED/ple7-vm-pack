@@ -37,14 +37,36 @@ drv_ge() { [ "$(printf '%s\n%s\n' "$1" "$DRV_MIN" | sort -V | head -1)" = "$DRV_
 
 # ---------- [1/6] NVIDIA open kernel driver ----------
 if ! nvidia-smi >/dev/null 2>&1; then
-  if command -v mokutil >/dev/null 2>&1 && mokutil --sb-state 2>/dev/null | grep -qi enabled; then
-    die "Secure Boot is ON — the DKMS nvidia module won't load. Disable Secure Boot in the VM BIOS (or enroll a MOK manually), then re-run."
-  fi
-  log "[1/6] installing NVIDIA open kernel module (need >=$DRV_MIN for CUDA 13)…"
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -q
   apt-get install -yq software-properties-common
   add-apt-repository -y universe || true
+  SB=0
+  command -v mokutil >/dev/null 2>&1 && mokutil --sb-state 2>/dev/null | grep -qi enabled && SB=1
+  KFLAV=$(uname -r | sed 's/^[^-]*-[0-9]*-//')   # generic | lowlatency | aws ...
+  if [ "$SB" = 1 ]; then
+    # Secure Boot is ON: DKMS-built modules won't load. Preferred bypass is
+    # Ubuntu's PREBUILT, Canonical-signed modules (same ABI as the running
+    # kernel) — no keys, no firmware changes.
+    log "[1/6] Secure Boot ON — trying Ubuntu's prebuilt signed modules…"
+    if apt-get install -yq "nvidia-driver-580-open" "linux-modules-nvidia-580-open-$(uname -r)" \
+       || apt-get install -yq "nvidia-driver-580-open" "linux-modules-nvidia-580-open-$KFLAV" \
+       || apt-get install -yq "nvidia-driver-580-open" "linux-modules-nvidia-580-open-generic-hwe-24.04" \
+       || apt-get install -yq "nvidia-driver-580-open" "linux-modules-nvidia-580-open-generic-hwe-22.04" \
+       || apt-get install -yq "nvidia-driver-580-open" "linux-modules-nvidia-580-open-generic"; then
+      log "[1/6] prebuilt signed driver installed. REBOOT, then: sudo bash ple7-deploy.sh"
+      exit 90
+    fi
+    die "Secure Boot is ON and no prebuilt signed 580 modules exist for kernel $(uname -r). Bypass it the easy way — per-VM switch, not the host's:
+    * ESXi:        Edit VM > VM Options > Boot Options > EFI > untick 'Secure Boot'
+                   (or .vmx line: uefi.secureBoot.enabled = \"FALSE\"; VM Secure Boot
+                   is INDEPENDENT of the ESXi host's Secure Boot and needs no vTPM)
+    * Workstation: VM Settings > Options > Advanced > uncheck 'Secure Boot'
+    then re-run this script. (Alternative without touching firmware:
+    'mokutil --import /var/lib/shim-signed/mok/MOK.der', reboot, enroll the key
+    in the blue MokManager screen, set a password you'll type once.)"
+  fi
+  log "[1/6] installing NVIDIA open kernel module (need >=$DRV_MIN for CUDA 13)…"
   apt-get install -yq nvidia-open \
     || apt-get install -yq nvidia-driver-580-open \
     || apt-get install -yq nvidia-driver-580-server-open \
