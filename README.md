@@ -47,9 +47,10 @@ exits 90 once and asks for a reboot).
   GPU VRAM summed, rounded up to the next power of two, **then one power
   higher** (2×64 GB → 256; 2×48 GB → 128). Resizable-BAR is unsupported in
   passthrough mode — leave it off on the host.
-- **Workstation only:** no ECC/vGPU issues, but passthrough requires the host
-  GPU to be the non-primary device or using `cuda.enable = TRUE` unsupported
-  configs — realistically ESXi (or KVM) is the right hypervisor for this.
+- **Hypervisor: ESXi (or KVM/Proxmox) only.** VMware Workstation/Player have
+  no PCI passthrough at all (`cuda.enable=TRUE` there is vCUDA over the host
+  driver — not this stack). Existence proof for the VM form factor: the
+  club-170hx corpus runs 4× 170HX on a Proxmox VM (SeaBIOS, 610.43.03 open).
 - **sm_80 or newer**, ≥48 GiB per GPU for PP=2 (production: 2× 64 GB), or a
   single ≥76 GiB card with `PP_SIZE=1`.
 - ≥96 GB VM RAM (the 48 GB PLE table is mmap'd), ≥400 GB free disk.

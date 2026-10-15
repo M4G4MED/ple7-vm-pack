@@ -211,6 +211,7 @@ Type=simple
 Environment=MODEL=/opt/ple7/model
 Environment=TABLE_DIR=/opt/ple7/ple-ssd
 Environment=CACHE_DIR=/opt/ple7/cache
+ExecStartPre=/bin/sh -c 'modprobe -a nvidia nvidia_uvm && nvidia-smi -L'
 ExecStart=/usr/local/bin/ple7-vm daemon
 Restart=on-failure
 RestartSec=15
